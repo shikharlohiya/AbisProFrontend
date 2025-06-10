@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { SidebarProvider } from '@/components/sidebarcontext';
+import { CallStateProvider } from '@/components/CallStateContext'; // NEW: Import CallStateProvider
 import ThemeRegistry from '@/components/ThemeRegistry';
 
 const inter = Inter({ 
@@ -49,7 +50,9 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <body className={inter.className} suppressHydrationWarning={true}>
         <ThemeRegistry>
           <SidebarProvider>
-            {children}
+            <CallStateProvider> {/* NEW: Add CallStateProvider */}
+              {children}
+            </CallStateProvider>
           </SidebarProvider>
         </ThemeRegistry>
       </body>

@@ -176,7 +176,7 @@ const MyReports: React.FC = () => {
                 fontFamily: 'Inter',
               }}
             >
-              Remarks Done
+              Total Calls
             </Typography>
             <Typography
               variant="h2"
@@ -308,7 +308,7 @@ const MyReports: React.FC = () => {
                 fontFamily: 'Inter',
               }}
             >
-              Follow Ups Done
+              Follow Ups Taken
             </Typography>
             <Typography
               variant="h2"

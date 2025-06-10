@@ -14,11 +14,19 @@ import {
 import {
   Search as SearchIcon,
   Notifications as NotificationsIcon,
+  ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
+import { useCallState } from '@/components/CallStateContext';
 
-const Header: React.FC = () => {
+interface HeaderProps {
+  onGoBack?: () => void;
+  currentView?: 'dashboard' | 'call-interface'; // NEW: Add current view prop
+}
+
+const Header: React.FC<HeaderProps> = ({ onGoBack, currentView }) => {
   const [searchValue, setSearchValue] = useState<string>('');
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
+  const { callState } = useCallState();
   const theme = useTheme();
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -32,6 +40,15 @@ const Header: React.FC = () => {
   const handleSearchBlur = (): void => {
     setIsSearchFocused(false);
   };
+
+  const handleGoBack = (): void => {
+    if (onGoBack) {
+      onGoBack();
+    }
+  };
+
+  // FIXED: Show back button only when in call interface AND call has ended
+  const showBackButton = currentView === 'call-interface' && callState === 'ended';
 
   return (
     <Box
@@ -48,8 +65,30 @@ const Header: React.FC = () => {
         boxShadow: 'none',
       }}
     >
-      {/* Left Side - Page Title */}
-      <Box>
+      {/* Left Side - Go Back Button + Page Title */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        {/* Go Back Button - Only visible in call interface when call ended */}
+        {showBackButton && (
+          <IconButton
+            onClick={handleGoBack}
+            sx={{
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              backgroundColor: '#F3F4F6',
+              color: '#374151',
+              border: '1px solid #E5E7EB',
+              '&:hover': {
+                backgroundColor: '#E5E7EB',
+                transform: 'scale(1.05)'
+              },
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <ArrowBackIcon sx={{ fontSize: 20 }} />
+          </IconButton>
+        )}
+
         <Typography
           variant="h4"
           sx={{

@@ -1,9 +1,9 @@
 'use client';
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './sidebarcontext';
 import Image from 'next/image';
+import { motion, AnimatePresence, Variants } from 'framer-motion';
 import {
   Box,
   List,
@@ -25,6 +25,117 @@ import {
   Note as NoteIcon,
   TrendingUp as TrendingUpIcon,
 } from '@mui/icons-material';
+
+// Animation variants for smooth transitions
+const sidebarVariants: Variants = {
+  expanded: {
+    width: 224,
+    transition: {
+      type: "spring",
+      stiffness: 300,
+      damping: 30,
+      mass: 0.8,
+    }
+  },
+  collapsed: {
+    width: 80,
+    transition: {
+      type: "spring",
+      stiffness: 300,
+      damping: 30,
+      mass: 0.8,
+    }
+  }
+};
+
+const textVariants: Variants = {
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: {
+      type: "spring",
+      stiffness: 400,
+      damping: 25,
+      delay: 0.1,
+    }
+  },
+  hidden: {
+    opacity: 0,
+    x: -20,
+    transition: {
+      type: "spring",
+      stiffness: 400,
+      damping: 25,
+    }
+  }
+};
+
+const logoTextVariants: Variants = {
+  visible: {
+    opacity: 1,
+    x: 0,
+    maxWidth: 128,
+    transition: {
+      type: "spring",
+      stiffness: 300,
+      damping: 25,
+      delay: 0.15,
+    }
+  },
+  hidden: {
+    opacity: 0,
+    x: -10,
+    maxWidth: 0,
+    transition: {
+      type: "spring",
+      stiffness: 300,
+      damping: 25,
+    }
+  }
+};
+
+const menuItemVariants: Variants = {
+  hover: {
+    scale: 1.05,
+    x: 4,
+    transition: {
+      type: "spring",
+      stiffness: 400,
+      damping: 25,
+    }
+  },
+  tap: {
+    scale: 0.98,
+    transition: {
+      type: "spring",
+      stiffness: 400,
+      damping: 25,
+    }
+  }
+};
+
+const activeIndicatorVariants: Variants = {
+  expanded: {
+    width: 'calc(100% - 20px)',
+    left: 0,
+    transform: 'translateX(0)',
+    transition: {
+      type: "spring",
+      stiffness: 300,
+      damping: 25,
+    }
+  },
+  collapsed: {
+    width: 56,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    transition: {
+      type: "spring",
+      stiffness: 300,
+      damping: 25,
+    }
+  }
+};
 
 // Types
 interface MenuItem {
@@ -56,7 +167,7 @@ const Sidebar: React.FC = () => {
     }
   }, [isCollapsed]);
 
-  const menuItems: MenuItem[] = [
+  const menuItems: MenuItem[] = useMemo(() => [
     { 
       id: 'collapse',
       label: 'Collapse', 
@@ -116,38 +227,38 @@ const Sidebar: React.FC = () => {
       path: null,
       disabled: true
     }
-  ];
+  ], [toggleSidebar]);
 
-  const handleNavigation = (path: string): void => {
+  const handleNavigation = useCallback((path: string): void => {
     router.push(path);
-  };
+  }, [router]);
 
-  const isActiveRoute = (path: string | null): boolean => {
+  const isActiveRoute = useCallback((path: string | null): boolean => {
     if (!path) return false;
     return pathname === path;
-  };
+  }, [pathname]);
 
-  const handleMenuClick = (item: MenuItem): void => {
+  const handleMenuClick = useCallback((item: MenuItem): void => {
     if (item.onClick) {
       item.onClick();
     } else if (item.path) {
       handleNavigation(item.path);
     }
-  };
+  }, [handleNavigation]);
 
-  const handleMouseEnter = (): void => {
+  const handleMouseEnter = useCallback((): void => {
     setIsHovered(true);
     if (!autoExpandDisabled && isCollapsed) {
       toggleSidebar();
     }
-  };
+  }, [autoExpandDisabled, isCollapsed, toggleSidebar]);
 
-  const handleMouseLeave = (): void => {
+  const handleMouseLeave = useCallback((): void => {
     setIsHovered(false);
     if (!autoExpandDisabled && !isCollapsed) {
       toggleSidebar();
     }
-  };
+  }, [autoExpandDisabled, isCollapsed, toggleSidebar]);
 
   useEffect(() => {
     if (!isCollapsed) {
@@ -162,15 +273,16 @@ const Sidebar: React.FC = () => {
   const displayCollapsed = isCollapsed && !isHovered;
 
   return (
-    <Box
+    <motion.div
+      variants={sidebarVariants}
+      animate={displayCollapsed ? "collapsed" : "expanded"}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      sx={{
-        position: 'fixed', // FIXED POSITION
+      style={{
+        position: 'fixed',
         left: 0,
         top: 0,
-        height: '100vh', // FULL HEIGHT
-        width: displayCollapsed ? 80 : 224,
+        height: '100vh',
         background: 'linear-gradient(180deg, #EE3741 67.79%, #F98087 100%)',
         borderTopRightRadius: 24,
         borderBottomRightRadius: 24,
@@ -178,8 +290,7 @@ const Sidebar: React.FC = () => {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        zIndex: 1200, // HIGH Z-INDEX
-        transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        zIndex: 1200,
       }}
     >
       {/* Logo Section */}
@@ -205,7 +316,17 @@ const Sidebar: React.FC = () => {
             justifyContent: displayCollapsed ? 'center' : 'flex-start',
           }}
         >
-          <Box sx={{ position: 'relative', zIndex: 20 }}>
+          <motion.div
+            animate={{
+              scale: displayCollapsed ? 1.05 : 1,
+            }}
+            transition={{
+              type: "spring",
+              stiffness: 300,
+              damping: 25,
+            }}
+            style={{ position: 'relative', zIndex: 20 }}
+          >
             <Image 
               src="/abis.png" 
               alt="ABIS Logo" 
@@ -213,40 +334,46 @@ const Sidebar: React.FC = () => {
               height={80}
               style={{
                 objectFit: 'contain',
-                transform: displayCollapsed ? 'scale(1.05)' : 'scale(1)',
-                transition: 'transform 0.4s',
                 filter: 'drop-shadow(0 5px 5px rgba(0, 0, 0, 0.55)) drop-shadow(0 4px 4px rgba(0, 0, 0, 0.55))'
               }}
             />
-          </Box>
+          </motion.div>
           
-          <Typography
-            variant="h5"
-            sx={{
-              ml: displayCollapsed ? 0 : 1.5,
-              color: 'white',
-              fontWeight: 'bold',
-              fontSize: '1.5rem',
-              lineHeight: 'tight',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              transition: 'all 0.3s ease-out',
-              maxWidth: displayCollapsed ? 0 : 128,
-              opacity: displayCollapsed ? 0 : 1,
-              fontFamily: "'Al Bayan', -apple-system, BlinkMacSystemFont, sans-serif",
-              textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
-            }}
-          >
-            ABIS Pro
-          </Typography>
+          <AnimatePresence mode="wait">
+            {!displayCollapsed && (
+              <motion.div
+                variants={logoTextVariants}
+                initial="hidden"
+                animate="visible"
+                exit="hidden"
+                style={{ marginLeft: 12 }}
+              >
+                <Typography
+                  variant="h5"
+                  sx={{
+                    color: 'white',
+                    fontWeight: 'bold',
+                    fontSize: '1.5rem',
+                    lineHeight: 'tight',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    fontFamily: "'Al Bayan', -apple-system, BlinkMacSystemFont, sans-serif",
+                    textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
+                  }}
+                >
+                  ABIS Pro
+                </Typography>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </Box>
       </Box>
 
-      {/* Navigation Menu - SCROLLABLE */}
+      {/* Navigation Menu */}
       <Box sx={{ 
         flex: 1, 
         px: displayCollapsed ? 0 : 2.5, 
-        overflow: 'auto', // ALLOW SCROLLING
+        overflow: 'hidden auto',
         '&::-webkit-scrollbar': {
           width: '4px',
         },
@@ -258,7 +385,11 @@ const Sidebar: React.FC = () => {
           borderRadius: '2px',
         },
       }}>
-        <List sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+        <List sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: 0.5,
+        }}>
           {menuItems.map((item, index) => {
             const isActive = isActiveRoute(item.path ?? null);
             const isHoveredItem = expandedItem === item.id;
@@ -274,94 +405,119 @@ const Sidebar: React.FC = () => {
                   alignItems: 'center',
                   justifyContent: displayCollapsed ? 'center' : 'flex-start',
                   mb: isLastItem ? 0 : 2.5,
-                  transition: 'all 0.2s',
                 }}
                 onMouseEnter={() => setExpandedItem(item.id)}
                 onMouseLeave={() => setExpandedItem(null)}
               >
-                {isActive && (
-                  <Box
-                    sx={{
-                      position: 'absolute',
-                      height: 56,
-                      borderRadius: 3,
-                      zIndex: 10,
-                      transition: 'all 0.3s ease-out',
-                      width: displayCollapsed ? 56 : 'calc(100% - 20px)',
-                      left: displayCollapsed ? '50%' : 0,
-                      transform: displayCollapsed ? 'translateX(-50%)' : 'none',
-                      background: '#8B0E18',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-                    }}
-                  />
-                )}
-
-                <ListItemButton
-                  onClick={() => handleMenuClick(item)}
-                  disabled={item.disabled && item.id !== 'collapse' && item.id !== 'dashboard'}
-                  sx={{
-                    position: 'relative',
-                    display: 'flex',
-                    alignItems: 'center',
-                    width: '100%',
-                    py: 2,
-                    zIndex: 20,
-                    transition: 'all 0.2s ease-out',
-                    borderRadius: 2,
-                    justifyContent: displayCollapsed ? 'center' : 'flex-start',
-                    transform: isHoveredItem && !isActive ? (displayCollapsed ? 'scale(1.05)' : 'translateX(4px)') : 'none',
-                    '&.Mui-disabled': {
-                      opacity: 0.6,
-                    },
-                  }}
+                {/* Active indicator with Framer Motion */}
+                <AnimatePresence>
+                  {isActive && (
+                    <motion.div
+                      variants={activeIndicatorVariants}
+                      animate={displayCollapsed ? "collapsed" : "expanded"}
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      whileHover={{ scale: 1.02 }}
+                      style={{
+                        position: 'absolute',
+                        height: 56,
+                        borderRadius: 12,
+                        zIndex: 10,
+                        background: '#8B0E18',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+                      }}
+                    />
+                  )}
+                </AnimatePresence>
+                <motion.div
+                  variants={menuItemVariants}
+                  whileHover={!displayCollapsed && !isActive ? "hover" : {}}
+                  whileTap="tap"
+                  style={{ width: '100%', position: 'relative', zIndex: 20 }}
                 >
-                  <ListItemIcon
+                  <ListItemButton
+                    onClick={() => handleMenuClick(item)}
+                    disabled={item.disabled && item.id !== 'collapse' && item.id !== 'dashboard'}
                     sx={{
-                      minWidth: 32,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      position: 'relative',
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        position: 'relative',
-                        zIndex: 10,
-                        transition: 'all 0.3s ease-out',
-                        transform: isActive ? 'scale(1.1)' : 'scale(1)',
-                        filter: isActive 
-                          ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3)) drop-shadow(0 0 8px rgba(255, 255, 255, 0.2))'
-                          : 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3))',
-                      }}
-                    >
-                      <item.icon sx={{ color: 'white', fontSize: '1.5rem' }} />
-                    </Box>
-                  </ListItemIcon>
-                  
-                  <ListItemText
-                    primary={item.label}
-                    sx={{
-                      '& .MuiListItemText-primary': {
-                        color: 'white',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        transition: 'all 0.3s ease-out',
-                        maxWidth: displayCollapsed ? 0 : 160,
-                        opacity: displayCollapsed ? 0 : 1,
-                        ml: displayCollapsed ? 0 : 2.5,
-                        fontWeight: isActive ? 600 : 500,
-                        letterSpacing: isActive ? 'wide' : 'normal',
-                        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-                        fontSize: '1.0625rem',
-                        lineHeight: 1.3,
-                        textShadow: isActive 
-                          ? '0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(255, 255, 255, 0.1)'
-                          : '0 1px 2px rgba(0, 0, 0, 0.3)',
+                      width: '100%',
+                      py: 2,
+                      borderRadius: 2,
+                      justifyContent: displayCollapsed ? 'center' : 'flex-start',
+                      '&.Mui-disabled': {
+                        opacity: 0.6,
+                      },
+                      '&:hover': {
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
                       },
                     }}
-                  />
-                </ListItemButton>
+                  >
+                    <ListItemIcon
+                      sx={{
+                        minWidth: 32,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        position: 'relative',
+                      }}
+                    >
+                      <motion.div
+                        animate={{
+                          scale: isActive ? 1.1 : 1,
+                        }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 400,
+                          damping: 25,
+                        }}
+                        style={{
+                          position: 'relative',
+                          zIndex: 10,
+                          filter: isActive 
+                            ? 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3)) drop-shadow(0 0 8px rgba(255, 255, 255, 0.2))'
+                            : 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3))',
+                        }}
+                      >
+                        <item.icon sx={{ 
+                          color: 'white', 
+                          fontSize: '1.5rem',
+                        }} />
+                      </motion.div>
+                    </ListItemIcon>
+                    
+                    <AnimatePresence mode="wait">
+                      {!displayCollapsed && (
+                        <motion.div
+                          variants={textVariants}
+                          initial="hidden"
+                          animate="visible"
+                          exit="hidden"
+                          style={{ marginLeft: 20, flex: 1 }}
+                        >
+                          <ListItemText
+                            primary={item.label}
+                            sx={{
+                              '& .MuiListItemText-primary': {
+                                color: 'white',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                fontWeight: isActive ? 600 : 500,
+                                letterSpacing: isActive ? 'wide' : 'normal',
+                                fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+                                fontSize: '1.0625rem',
+                                lineHeight: 1.3,
+                                textShadow: isActive 
+                                  ? '0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(255, 255, 255, 0.1)'
+                                  : '0 1px 2px rgba(0, 0, 0, 0.3)',
+                              },
+                            }}
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </ListItemButton>
+                </motion.div>
               </ListItem>
             );
 
@@ -372,6 +528,9 @@ const Sidebar: React.FC = () => {
                 placement="right"
                 arrow
                 open={isHoveredItem}
+                TransitionProps={{
+                  timeout: 200,
+                }}
                 sx={{
                   '& .MuiTooltip-tooltip': {
                     bgcolor: 'rgba(0, 0, 0, 0.85)',
@@ -379,6 +538,7 @@ const Sidebar: React.FC = () => {
                     fontSize: '0.875rem',
                     fontWeight: 500,
                     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                    backdropFilter: 'blur(8px)',
                   },
                   '& .MuiTooltip-arrow': {
                     color: 'rgba(0, 0, 0, 0.85)',
@@ -393,7 +553,7 @@ const Sidebar: React.FC = () => {
           })}
         </List>
       </Box>
-    </Box>
+    </motion.div>
   );
 };
 
