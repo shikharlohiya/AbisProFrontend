@@ -7,6 +7,9 @@ interface SidebarContextType {
   isCollapsed: boolean;
   toggleSidebar: () => void;
   setIsCollapsed: (collapsed: boolean) => void;
+  // ADD THIS: Current page tracking
+  currentPage: string;
+  setCurrentPage: (page: string) => void;
 }
 
 // Create context with undefined initial value
@@ -29,6 +32,8 @@ interface SidebarProviderProps {
 // Provider component with TypeScript
 export const SidebarProvider: React.FC<SidebarProviderProps> = ({ children }) => {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
+  // ADD THIS: Current page state
+  const [currentPage, setCurrentPage] = useState<string>('/dashboard');
 
   const toggleSidebar = (): void => {
     setIsCollapsed(prev => !prev);
@@ -38,6 +43,9 @@ export const SidebarProvider: React.FC<SidebarProviderProps> = ({ children }) =>
     isCollapsed,
     toggleSidebar,
     setIsCollapsed,
+    // ADD THIS: Include new functionality
+    currentPage,
+    setCurrentPage,
   };
 
   return (
