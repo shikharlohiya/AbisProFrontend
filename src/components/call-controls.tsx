@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { 
   Box, 
   IconButton, 
@@ -8,20 +8,22 @@ import {
   Button,
   Avatar,
   Paper,
-  Divider
+  CircularProgress,
+  TextField,
+  InputAdornment
 } from '@mui/material';
 import { 
   Phone as PhoneIcon,
-  Mic as MicIcon,
-  MicOff as MicOffIcon,
   PersonAdd as PersonAddIcon,
-  CallMerge as CallMergeIcon,
-  CallEnd as CallEndIcon
+  CallEnd as CallEndIcon,
+  Pause as PauseIcon,
+  PlayArrow as PlayArrowIcon,
+  Send as SendIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { keyframes } from '@emotion/react';
 import { useCallState } from '@/components/CallStateContext';
-import callingApiService from '@/services/callingApi';
-import callStorage from '@/services/callStorage';
+import { useSocket } from '@/components/socket-context';
 
 // Pulse animation for incoming calls
 const pulseAnimation = keyframes`
@@ -33,169 +35,278 @@ const pulseAnimation = keyframes`
 const CallControls: React.FC = () => {
   const { 
     callState, 
-    setCallState, 
     dialedNumber,
-    isMuted, 
-    setIsMuted, 
-    callDuration, 
-    setCallDuration 
+    currentCallId,
+    callError,
+    endCall,
+    resetCallState,
+    // ✅ LEGACY PATTERN: Use legacy state variables
+    isConnected,
+    timer,
+    getCallStatus,
+    // ✅ NEW: Last called number for callback
+    lastCalledNumber,
+    initiateCall,
+    // ✅ NEW: Hold/Resume functionality
+    isOnHold,
+    holdOrResumeCall,
+    // ✅ NEW: Merge call functionality
+    mergeCall
   } = useCallState();
 
-  // Update call duration for active calls
-  useEffect(() => {
-    if (callState === 'active') {
-      const interval = setInterval(() => {
-        setCallDuration(callDuration + 1);
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [callState, callDuration, setCallDuration]);
+  const { isConnected: socketConnected } = useSocket();
 
-  // Format duration
-  const formatDuration = useCallback((seconds: number): string => {
+  // ✅ NEW: Add call input state
+  const [showAddCallInput, setShowAddCallInput] = useState(false);
+  const [addCallNumber, setAddCallNumber] = useState('');
+  
+  // ✅ NEW: Customer name state (defaulting to 'Unknown')
+  const [customerName, setCustomerName] = useState('Unknown');
+
+  // ✅ FIXED: Display both numbers when both calls are active
+  const displayNumbers = useMemo(() => {
+    const numbers = [dialedNumber, lastCalledNumber].filter(Boolean);
+    return numbers.length > 1 ? numbers.join(' / ') : numbers[0] || '';
+  }, [dialedNumber, lastCalledNumber]);
+
+  // ✅ LEGACY PATTERN: Format timer like legacy
+  const formatTimer = useCallback((seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }, []);
 
-  // Call action handlers with API integration
+  // Call action handlers
   const handleCall = useCallback(async () => {
+    if (!socketConnected) {
+      console.error('Cannot initiate call - no socket connection');
+      return;
+    }
+
     try {
-      setCallState('connecting');
-      setCallDuration(0);
-      
-      // Get stored phone number from dialer or use dialed number
-      const phoneNumber = localStorage.getItem('currentPhoneNumber') || dialedNumber;
-      
-      const response = await callingApiService.initiateCall(phoneNumber);
-      
-      if (response.status === 1 && response.message.Response === 'success') {
-        const callId = response.message.callid;
-        callStorage.setCurrentCall(callId, phoneNumber);
-        
-        // Simulate connection delay
-        setTimeout(() => setCallState('active'), 2000);
-      } else {
-        throw new Error('Call initiation failed');
+      if (lastCalledNumber) {
+        console.log('📞 CallControls: Callback to:', lastCalledNumber);
+        await initiateCall(lastCalledNumber);
       }
     } catch (error) {
-      console.error('Call failed:', error);
-      setCallState('ended');
+      console.error('📞 CallControls: Callback failed:', error);
     }
-  }, [setCallState, setCallDuration, dialedNumber]);
-
-  const handleAccept = useCallback(() => {
-    setCallState('active');
-    setCallDuration(0);
-  }, [setCallState, setCallDuration]);
-
-  const handleReject = useCallback(async () => {
-    const callId = callStorage.getCurrentCallId();
-    
-    if (callId) {
-      try {
-        await callingApiService.endCall(callId);
-      } catch (error) {
-        console.error('Failed to end call via API:', error);
-      }
-      callStorage.endCurrentCall(callDuration);
-    }
-    
-    setCallState('ended');
-    setCallDuration(0);
-  }, [setCallState, setCallDuration, callDuration]);
+  }, [socketConnected, lastCalledNumber, initiateCall]);
 
   const handleEndCall = useCallback(async () => {
-    const callId = callStorage.getCurrentCallId();
+    console.log('📞 CallControls: Ending call');
     
-    if (callId) {
-      try {
-        await callingApiService.endCall(callId);
-        console.log('✅ Call ended via API');
-      } catch (error) {
-        console.error('❌ Failed to end call via API:', error);
-      }
-      callStorage.endCurrentCall(callDuration);
+    try {
+      await endCall();
+    } catch (error) {
+      console.error('❌ CallControls: Failed to end call:', error);
+      resetCallState();
     }
-    
-    setCallState('ended');
-    setCallDuration(0);
-    setIsMuted(false);
-  }, [setCallState, setCallDuration, setIsMuted, callDuration]);
+  }, [endCall, resetCallState]);
 
-  const handleMute = useCallback(() => {
-    setIsMuted(!isMuted);
-    console.log(`🔇 Call ${isMuted ? 'unmuted' : 'muted'}`);
-  }, [isMuted, setIsMuted]);
-
+  // ✅ NEW: Add call handler with input toggle
   const handleAddCall = useCallback(() => {
-    console.log('📞 Add call functionality - API integration pending');
+    setShowAddCallInput(true);
+    setAddCallNumber('');
   }, []);
 
-  const handleMerge = useCallback(() => {
-    console.log('🔀 Merge calls functionality - API integration pending');
+  // ✅ NEW: Submit merge call
+  const handleSubmitMergeCall = useCallback(async () => {
+    if (!addCallNumber.trim()) return;
+    
+    try {
+      console.log('📞 CallControls: Merging call with:', addCallNumber);
+      await mergeCall(addCallNumber.trim());
+      
+      // Reset input state
+      setShowAddCallInput(false);
+      setAddCallNumber('');
+    } catch (error) {
+      console.error('❌ CallControls: Failed to merge call:', error);
+    }
+  }, [addCallNumber, mergeCall]);
+
+  // ✅ NEW: Cancel add call
+  const handleCancelAddCall = useCallback(() => {
+    setShowAddCallInput(false);
+    setAddCallNumber('');
   }, []);
 
-  // Memoized styles
+  // ✅ NEW: Handle Enter key in input
+  const handleAddCallKeyPress = useCallback((event: React.KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      handleSubmitMergeCall();
+    } else if (event.key === 'Escape') {
+      handleCancelAddCall();
+    }
+  }, [handleSubmitMergeCall, handleCancelAddCall]);
+
+  // ✅ NEW: Hold/Resume handler
+  const handleHoldResume = useCallback(async () => {
+    try {
+      await holdOrResumeCall();
+    } catch (error) {
+      console.error('❌ CallControls: Failed to hold/resume call:', error);
+    }
+  }, [holdOrResumeCall]);
+
+  // Get contact initials from phone number
+  const getContactInitials = useCallback((phoneNumber: string): string => {
+    if (!phoneNumber) return 'UN';
+    const cleaned = phoneNumber.replace(/\D/g, '');
+    return cleaned.slice(-2) || 'UN';
+  }, []);
+
+  // ✅ FIXED: Simplified status display (no duplication)
+  const getCallStatusInfo = useCallback(() => {
+    const status = getCallStatus();
+    
+    switch (status) {
+      case 'Ringing Agent...':
+        return { 
+          color: '#F59E0B', 
+          displayText: 'Ringing Agent...'
+        };
+      case 'Ringing Customer...':
+        return { 
+          color: '#3B82F6', 
+          displayText: 'Ringing Customer...'
+        };
+      case 'Connected':
+        return { 
+          color: '#22C55E', 
+          displayText: 'Connected'
+        };
+      case 'On Hold':
+        return { 
+          color: '#F59E0B', 
+          displayText: 'On Hold'
+        };
+      case 'Call Ended':
+        return { 
+          color: '#6B7280', 
+          displayText: 'Call Ended'
+        };
+      case 'Call Failed':
+        return { 
+          color: '#EF4444', 
+          displayText: 'Call Failed'
+        };
+      default:
+        return { 
+          color: '#6B7280', 
+          displayText: 'Ready'
+        };
+    }
+  }, [getCallStatus]);
+
   const containerStyles = useMemo(() => ({
     bgcolor: 'white',
     borderRadius: 3,
     border: '1px solid #E5E7EB',
-    p: 3,
+    p: 4,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     height: '100%',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    position: 'relative',
+    minHeight: '400px'
   }), []);
 
-  // Call ended state
-  if (callState === 'ended') {
+  const statusInfo = getCallStatusInfo();
+
+  // Call ended state with callback functionality
+  if (callState === 'ended' || callState === 'idle' || callState === 'failed') {
     return (
       <Paper elevation={3} sx={containerStyles}>
+        <Avatar
+          sx={{
+            width: 80,
+            height: 80,
+            bgcolor: callState === 'failed' ? '#EF4444' : '#6B7280',
+            fontSize: 28,
+            fontWeight: 'bold',
+            mb: 2
+          }}
+        >
+          {getContactInitials(displayNumbers)}
+        </Avatar>
+
         <Typography variant="h6" sx={{ 
           color: '#1F2937', 
           fontWeight: 600, 
           mb: 1,
           fontFamily: 'Inter'
         }}>
-          Unknown
+          {callState === 'failed' ? 'Call Failed' : 
+           lastCalledNumber ? 'Call Back' : 'Ready'}
         </Typography>
         
+        <Typography variant="body2" sx={{ 
+          color: '#6B7280', 
+          mb: 1,
+          fontFamily: 'Inter'
+        }}>
+          {displayNumbers || '+91 00000 00000'}
+        </Typography>
+
         <Typography variant="body2" sx={{ 
           color: '#6B7280', 
           mb: 4,
           fontFamily: 'Inter'
         }}>
-          {dialedNumber || '+91 00000 00000'}
+          {customerName}
         </Typography>
 
-        <Button
-          onClick={handleCall}
-          sx={{
-            width: 80,
-            height: 80,
-            borderRadius: '50%',
-            backgroundColor: '#22C55E',
-            color: 'white',
-            minWidth: 'unset',
-            '&:hover': {
-              backgroundColor: '#16A34A',
-              transform: 'scale(1.05)'
-            },
-            transition: 'all 0.2s ease',
-            mb: 2
-          }}
-        >
-          <PhoneIcon sx={{ fontSize: 32 }} />
-        </Button>
+        {/* Call Error Display */}
+        {callError && (
+          <Typography variant="body2" sx={{ 
+            color: '#EF4444', 
+            mb: 2,
+            fontFamily: 'Inter',
+            textAlign: 'center',
+            fontSize: '0.85rem'
+          }}>
+            {callError}
+          </Typography>
+        )}
+
+        {/* Callback Button */}
+        {lastCalledNumber && (
+          <Button
+            onClick={handleCall}
+            disabled={!socketConnected}
+            sx={{
+              width: 80,
+              height: 80,
+              borderRadius: '50%',
+              backgroundColor: socketConnected ? '#22C55E' : '#D1D5DB',
+              color: 'white',
+              minWidth: 'unset',
+              '&:hover': {
+                backgroundColor: socketConnected ? '#16A34A' : '#D1D5DB',
+                transform: socketConnected ? 'scale(1.05)' : 'none'
+              },
+              '&:disabled': {
+                backgroundColor: '#D1D5DB',
+                color: '#9CA3AF'
+              },
+              transition: 'all 0.2s ease',
+              mb: 2
+            }}
+          >
+            <PhoneIcon sx={{ fontSize: 32 }} />
+          </Button>
+        )}
 
         <Typography variant="body2" sx={{ 
           color: '#6B7280',
           fontFamily: 'Inter',
-          fontWeight: 500
+          fontWeight: 500,
+          textAlign: 'center'
         }}>
-          Call Again
+          {lastCalledNumber ? 'Call Back' : 'No Recent Call'}
         </Typography>
       </Paper>
     );
@@ -216,7 +327,7 @@ const CallControls: React.FC = () => {
             animation: `${pulseAnimation} 2s infinite`
           }}
         >
-          U
+          {getContactInitials(displayNumbers)}
         </Avatar>
 
         <Typography variant="h6" sx={{ 
@@ -225,33 +336,28 @@ const CallControls: React.FC = () => {
           mb: 1,
           fontFamily: 'Inter'
         }}>
-          Unknown
+          Incoming Call
         </Typography>
         
+        <Typography variant="body2" sx={{ 
+          color: '#6B7280', 
+          mb: 1,
+          fontFamily: 'Inter'
+        }}>
+          {displayNumbers || '+91 00000 00000'}
+        </Typography>
+
         <Typography variant="body2" sx={{ 
           color: '#6B7280', 
           mb: 2,
           fontFamily: 'Inter'
         }}>
-          {dialedNumber || '+91 00000 00000'}
+          {customerName}
         </Typography>
-
-        <Box sx={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: 1, 
-          mb: 4,
-          color: '#6B7280'
-        }}>
-          <PhoneIcon sx={{ fontSize: 16 }} />
-          <Typography variant="caption" sx={{ fontFamily: 'Inter' }}>
-            incoming...
-          </Typography>
-        </Box>
 
         <Box sx={{ display: 'flex', gap: 4 }}>
           <Button
-            onClick={handleReject}
+            onClick={handleEndCall}
             sx={{
               width: 64,
               height: 64,
@@ -270,7 +376,7 @@ const CallControls: React.FC = () => {
           </Button>
 
           <Button
-            onClick={handleAccept}
+            onClick={handleCall}
             sx={{
               width: 64,
               height: 64,
@@ -292,106 +398,143 @@ const CallControls: React.FC = () => {
     );
   }
 
-  // Active/Connecting call state with Customer Info Header
+  // ✅ UPDATED: Active call state with clean design
   return (
     <Paper elevation={3} sx={containerStyles}>
-      {/* Customer Info Header */}
-      <Box sx={{ 
-        width: '100%', 
-        p: 2, 
-        borderBottom: '1px solid #F3F4F6',
-        mb: 2,
-        borderRadius: 2,
-        backgroundColor: '#F9FAFB'
-      }}>
-        <Typography variant="subtitle2" sx={{ 
-          color: '#6B7280', 
-          fontFamily: 'Inter',
-          fontWeight: 600,
-          mb: 1,
-          fontSize: '0.75rem',
-          textTransform: 'uppercase',
-          letterSpacing: '0.05em'
-        }}>
-          Customer Info
-        </Typography>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-          <Typography variant="body2" sx={{ 
-            color: '#374151',
-            fontFamily: 'Inter',
-            fontSize: '0.85rem'
-          }}>
-            <strong>Location:</strong> Unknown Location
-          </Typography>
-          <Typography variant="body2" sx={{ 
-            color: '#374151',
-            fontFamily: 'Inter',
-            fontSize: '0.85rem'
-          }}>
-            <strong>Customer ID:</strong> UNKNOWN-ID
-          </Typography>
-        </Box>
-      </Box>
-
+      {/* Avatar */}
       <Avatar
         sx={{
-          width: 80,
-          height: 80,
-          bgcolor: '#3B82F6',
-          fontSize: 28,
+          width: 90,
+          height: 90,
+          bgcolor: statusInfo.color,
+          fontSize: 32,
           fontWeight: 'bold',
           mb: 2
         }}
       >
-        U
+        {getContactInitials(displayNumbers)}
       </Avatar>
 
+      {/* ✅ FIXED: Single status display (no duplication) */}
       <Typography variant="h6" sx={{ 
-        color: '#1F2937', 
+        color: statusInfo.color, 
         fontWeight: 600, 
         mb: 1,
         fontFamily: 'Inter'
       }}>
-        Unknown
+        {statusInfo.displayText}
       </Typography>
       
+      {/* ✅ FIXED: Phone Number(s) - shows both when both calls active */}
+      <Typography variant="body1" sx={{ 
+        color: '#1F2937', 
+        mb: 1,
+        fontFamily: 'Inter',
+        fontWeight: 500,
+        textAlign: 'center'
+      }}>
+        {displayNumbers || '+91 00000 00000'}
+      </Typography>
+
+      {/* ✅ NEW: Customer Name */}
       <Typography variant="body2" sx={{ 
         color: '#6B7280', 
-        mb: 1,
+        mb: 2,
         fontFamily: 'Inter'
       }}>
-        {dialedNumber || '+91 00000 00000'}
+        {customerName}
       </Typography>
 
-      {/* Call Duration */}
-      <Typography variant="body1" sx={{ 
-        color: callState === 'connecting' ? '#F59E0B' : '#22C55E',
-        fontFamily: 'monospace',
-        fontWeight: 600,
-        mb: 3
-      }}>
-        {callState === 'connecting' ? 'Connecting...' : formatDuration(callDuration)}
-      </Typography>
+      {/* Timer Display */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 4 }}>
+        {!isConnected && (
+          <CircularProgress size={16} sx={{ color: statusInfo.color }} />
+        )}
+        <Typography variant="h5" sx={{ 
+          color: statusInfo.color,
+          fontFamily: 'monospace',
+          fontWeight: 600
+        }}>
+          {isOnHold ? `On Hold - ${formatTimer(timer)}` : formatTimer(timer)}
+        </Typography>
+      </Box>
 
-      {/* Call Controls Grid */}
+      {/* ✅ NEW: Add Call Input Field */}
+      {showAddCallInput && (
+        <Box sx={{ 
+          width: '100%', 
+          mb: 3,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center'
+        }}>
+          <TextField
+            autoFocus
+            fullWidth
+            placeholder="Enter phone number"
+            value={addCallNumber}
+            onChange={(e) => setAddCallNumber(e.target.value)}
+            onKeyDown={handleAddCallKeyPress}
+            sx={{
+              maxWidth: '280px',
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 2,
+                backgroundColor: '#F9FAFB'
+              }
+            }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton
+                    onClick={handleSubmitMergeCall}
+                    disabled={!addCallNumber.trim()}
+                    size="small"
+                    sx={{ 
+                      color: '#22C55E',
+                      '&:disabled': { color: '#D1D5DB' }
+                    }}
+                  >
+                    <SendIcon fontSize="small" />
+                  </IconButton>
+                  <IconButton
+                    onClick={handleCancelAddCall}
+                    size="small"
+                    sx={{ color: '#EF4444', ml: 0.5 }}
+                  >
+                    <CloseIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              )
+            }}
+          />
+          <Typography variant="caption" sx={{ 
+            mt: 1, 
+            color: '#6B7280',
+            fontFamily: 'Inter'
+          }}>
+            Press Enter to merge call or Escape to cancel
+          </Typography>
+        </Box>
+      )}
+
+      {/* ✅ UPDATED: Three buttons in a row with proper spacing */}
       <Box sx={{ 
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
+        display: 'flex',
         gap: 3,
         mb: 4,
-        width: '100%',
-        maxWidth: 240
+        alignItems: 'center'
       }}>
-        {/* Add Call */}
+        {/* Add Call Button */}
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <IconButton
             onClick={handleAddCall}
-            disabled={callState === 'connecting'}
+            disabled={!isConnected || showAddCallInput}
             sx={{
               backgroundColor: '#F3F4F6',
               color: '#6B7280',
-              width: 56,
-              height: 56,
+              width: 60,
+              height: 60,
+              borderRadius: 2,
               '&:hover': {
                 backgroundColor: '#E5E7EB',
                 transform: 'scale(1.05)'
@@ -403,29 +546,31 @@ const CallControls: React.FC = () => {
               transition: 'all 0.2s ease'
             }}
           >
-            <PersonAddIcon />
+            <PersonAddIcon sx={{ fontSize: 24 }} />
           </IconButton>
           <Typography variant="caption" sx={{ 
             mt: 1, 
             color: '#6B7280',
-            fontFamily: 'Inter'
+            fontFamily: 'Inter',
+            fontSize: '0.75rem'
           }}>
             Add Call
           </Typography>
         </Box>
 
-        {/* Mute */}
+        {/* Hold/Resume Button */}
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <IconButton
-            onClick={handleMute}
-            disabled={callState === 'connecting'}
+            onClick={handleHoldResume}
+            disabled={!isConnected}
             sx={{
-              backgroundColor: isMuted ? '#EF4444' : '#F3F4F6',
-              color: isMuted ? 'white' : '#6B7280',
-              width: 56,
-              height: 56,
+              backgroundColor: isOnHold ? '#F59E0B' : '#F3F4F6',
+              color: isOnHold ? 'white' : '#6B7280',
+              width: 60,
+              height: 60,
+              borderRadius: 2,
               '&:hover': {
-                backgroundColor: isMuted ? '#DC2626' : '#E5E7EB',
+                backgroundColor: isOnHold ? '#D97706' : '#E5E7EB',
                 transform: 'scale(1.05)'
               },
               '&:disabled': {
@@ -435,68 +580,39 @@ const CallControls: React.FC = () => {
               transition: 'all 0.2s ease'
             }}
           >
-            {isMuted ? <MicOffIcon /> : <MicIcon />}
+            {isOnHold ? <PlayArrowIcon sx={{ fontSize: 24 }} /> : <PauseIcon sx={{ fontSize: 24 }} />}
           </IconButton>
           <Typography variant="caption" sx={{ 
             mt: 1, 
             color: '#6B7280',
-            fontFamily: 'Inter'
+            fontFamily: 'Inter',
+            fontSize: '0.75rem'
           }}>
-            Mute
-          </Typography>
-        </Box>
-
-        {/* Merge */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <IconButton
-            onClick={handleMerge}
-            disabled={callState === 'connecting'}
-            sx={{
-              backgroundColor: '#F3F4F6',
-              color: '#6B7280',
-              width: 56,
-              height: 56,
-              '&:hover': {
-                backgroundColor: '#E5E7EB',
-                transform: 'scale(1.05)'
-              },
-              '&:disabled': {
-                backgroundColor: '#F9FAFB',
-                color: '#D1D5DB'
-              },
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <CallMergeIcon />
-          </IconButton>
-          <Typography variant="caption" sx={{ 
-            mt: 1, 
-            color: '#6B7280',
-            fontFamily: 'Inter'
-          }}>
-            Merge
+            {isOnHold ? 'Resume' : 'Hold'}
           </Typography>
         </Box>
       </Box>
 
-      {/* End Call Button */}
+      {/* ✅ FIXED: End Call Button - Perfect Circle */}
       <Button
         onClick={handleEndCall}
         sx={{
-          width: 72,
-          height: 72,
+          width: 80,
+          height: 80,
           borderRadius: '50%',
           backgroundColor: '#EF4444',
           color: 'white',
           minWidth: 'unset',
+          aspectRatio: '1/1',
           '&:hover': {
             backgroundColor: '#DC2626',
             transform: 'scale(1.05)'
           },
-          transition: 'all 0.2s ease'
+          transition: 'all 0.2s ease',
+          boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)'
         }}
       >
-        <CallEndIcon sx={{ fontSize: 28 }} />
+        <CallEndIcon sx={{ fontSize: 32 }} />
       </Button>
     </Paper>
   );

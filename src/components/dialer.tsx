@@ -8,20 +8,21 @@ import {
   Button,
   useTheme,
   Alert,
-  Snackbar
+  Snackbar,
+  CircularProgress
 } from '@mui/material';
 import { Phone as PhoneIcon, Backspace as BackspaceIcon } from '@mui/icons-material';
 import { useCallState } from '@/components/CallStateContext';
-import callingApiService from '@/services/callingApi';
+import { useSocket } from '@/components/socket-context';
 
 // Local dialer states (different from global CallState)
-type LocalDialerState = 'idle' | 'ringing' | 'failed';
+type LocalDialerState = 'idle' | 'dialing' | 'failed';
 type KeypadButton = number | '*' | '#';
 
 interface DialerProps {
   isCollapsed?: boolean;
   initialNumber?: string;
-  onCall?: () => void; // Callback for view switching
+  onCall?: () => void;
 }
 
 const Dialer: React.FC<DialerProps> = ({ 
@@ -30,7 +31,18 @@ const Dialer: React.FC<DialerProps> = ({
   onCall
 }) => {
   // Global call state management
-  const { setCallState: setGlobalCallState, setCallDuration, setDialedNumber } = useCallState();
+  const { 
+    callState, 
+    dialedNumber, 
+    setDialedNumber, 
+    currentCallId,
+    callError,
+    initiateCall,
+    resetCallState
+  } = useCallState();
+  
+  // Socket connection
+  const { isConnected: socketConnected } = useSocket();
   
   // Local dialer state
   const [phoneNumber, setPhoneNumber] = useState<string>('');
@@ -43,14 +55,32 @@ const Dialer: React.FC<DialerProps> = ({
   // Error handling
   const [error, setError] = useState<string | null>(null);
   const [showError, setShowError] = useState(false);
+  const [isInitiating, setIsInitiating] = useState(false);
   
-  // Current call ID for tracking
-  const [currentCallId, setCurrentCallId] = useState<number | null>(null);
+  // ✅ NEW: Track if we should clear on next idle state
+  const [shouldClearOnIdle, setShouldClearOnIdle] = useState(false);
   
   const dialerRef = useRef<HTMLDivElement>(null);
   const theme = useTheme();
 
-  // FIXED: Memoized keypad layout to prevent recreation on every render
+  // ✅ FIXED: Only listen for clear events, don't auto-clear on every change
+  useEffect(() => {
+    const handleClearDialer = () => {
+      console.log('🧹 Dialer received clear event');
+      setPhoneNumber('');
+      setIsInitiating(false);
+      setLocalDialerState('idle');
+      setShouldClearOnIdle(false);
+    };
+
+    window.addEventListener('clearDialer', handleClearDialer);
+    
+    return () => {
+      window.removeEventListener('clearDialer', handleClearDialer);
+    };
+  }, []);
+
+  // Memoized keypad layout
   const keypadRows: KeypadButton[][] = useMemo(() => [
     [1, 2, 3],
     [4, 5, 6],
@@ -58,7 +88,7 @@ const Dialer: React.FC<DialerProps> = ({
     ['*', 0, '#']
   ], []);
 
-  // FIXED: Memoized time formatting function
+  // Memoized time formatting function
   const formatTime = useCallback((date: Date): string => {
     const options: Intl.DateTimeFormatOptions = {
       hour: '2-digit',
@@ -75,25 +105,45 @@ const Dialer: React.FC<DialerProps> = ({
     return `🇮🇳 ${time} IST, ${dateStr}`;
   }, []);
 
-  // FIXED: Memoized phone number formatting
+  // Memoized phone number formatting
   const formatPhoneDisplay = useCallback((number: string): string => {
     if (number.length === 0) return '+91';
     return `+91 ${number}`;
   }, []);
 
-  // FIXED: Memoized status message with proper dependencies
+  // Memoized status message
   const getStatusMessage = useCallback((): string => {
+    // Show call state if there's an active call
+    if (callState !== 'idle') {
+      switch (callState) {
+        case 'connecting':
+          return `📞 Connecting to +91 ${phoneNumber}...`;
+        case 'active':
+          return `📞 Call Active - +91 ${phoneNumber}`;
+        case 'ended':
+          return `📞 Call Ended`;
+        default:
+          return `📞 ${callState}`;
+      }
+    }
+    
+    // Show socket connection status
+    if (!socketConnected) {
+      return '🔴 Offline - No connection';
+    }
+    
+    // Show local dialer state
     switch (localDialerState) {
       case 'idle':
         return `${formatTime(currentTime)} ${isDialerFocused ? '⌨️' : ''}`;
-      case 'ringing':
-        return `📞 Connecting... +91 ${phoneNumber}`;
+      case 'dialing':
+        return `📞 Initiating call...`;
       case 'failed':
         return '❌ Call failed - Try again';
       default:
         return '';
     }
-  }, [localDialerState, currentTime, isDialerFocused, phoneNumber, formatTime]);
+  }, [callState, localDialerState, currentTime, isDialerFocused, phoneNumber, socketConnected, formatTime]);
 
   // Update time every second
   useEffect(() => {
@@ -103,7 +153,70 @@ const Dialer: React.FC<DialerProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // FIXED: Improved keyboard handler with useCallback
+  // Sync with global dialed number
+  useEffect(() => {
+    if (dialedNumber && dialedNumber !== phoneNumber) {
+      // Extract number from formatted string like "+91 98765 43210"
+      const cleanNumber = dialedNumber.replace(/^\+91\s*/, '').replace(/\s/g, '');
+      setPhoneNumber(cleanNumber);
+    }
+  }, [dialedNumber, phoneNumber]);
+
+  // ✅ FIXED: Only clear when call actually ends, not on every state change
+  useEffect(() => {
+    switch (callState) {
+      case 'connecting':
+        setLocalDialerState('idle');
+        setIsInitiating(false);
+        if (onCall) {
+          onCall(); // Switch to call interface
+        }
+        break;
+      case 'active':
+        setLocalDialerState('idle');
+        setIsInitiating(false);
+        break;
+      case 'ended':
+        setLocalDialerState('idle');
+        setIsInitiating(false);
+        // ✅ FIXED: Mark for clearing but don't clear immediately
+        setShouldClearOnIdle(true);
+        break;
+      case 'failed':
+        setLocalDialerState('failed');
+        setIsInitiating(false);
+        // ✅ FIXED: Mark for clearing but don't clear immediately
+        setShouldClearOnIdle(true);
+        break;
+      case 'idle':
+        setLocalDialerState('idle');
+        setIsInitiating(false);
+        // ✅ FIXED: Only clear if we're supposed to clear
+        if (shouldClearOnIdle) {
+          console.log('🧹 Clearing dialer after call ended');
+          setPhoneNumber('');
+          setShouldClearOnIdle(false);
+        }
+        break;
+    }
+  }, [callState, onCall, shouldClearOnIdle]); // ✅ REMOVED phoneNumber dependency
+
+  // Handle call errors
+  useEffect(() => {
+    if (callError) {
+      setError(callError);
+      setShowError(true);
+      setLocalDialerState('failed');
+      setIsInitiating(false);
+      
+      // Auto-hide error after 5 seconds
+      setTimeout(() => {
+        setLocalDialerState('idle');
+      }, 5000);
+    }
+  }, [callError]);
+
+  // Keyboard handler
   const handleKeyDown = useCallback((event: KeyboardEvent): void => {
     if (!isDialerFocused) return;
     
@@ -125,31 +238,30 @@ const Dialer: React.FC<DialerProps> = ({
       event.preventDefault();
       handleCall();
     }
-  }, [phoneNumber, isDialerFocused]); // FIXED: Added missing dependency
+  }, [phoneNumber, isDialerFocused]);
 
-  // Handle keyboard input - ONLY when dialer is focused
+  // Handle keyboard input
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]); // FIXED: Proper dependency
+  }, [handleKeyDown]);
 
-  // FIXED: Improved click outside handler with useCallback
+  // Click outside handler
   const handleClickOutside = useCallback((event: MouseEvent): void => {
     if (dialerRef.current && !dialerRef.current.contains(event.target as Node)) {
       setIsDialerFocused(false);
     }
   }, []);
 
-  // Handle click outside to unfocus dialer
+  // Handle click outside
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [handleClickOutside]); // FIXED: Proper dependency
+  }, [handleClickOutside]);
 
-  // UPDATED: Handle initial number from recent calls AND URL parameters
+  // Handle initial number from URL parameters or recent calls
   useEffect(() => {
     if (initialNumber && initialNumber !== lastInitialNumber && initialNumber !== phoneNumber) {
-      // Clean the number - remove +91 prefix and spaces if present
       const cleanNumber = initialNumber.replace(/^\+91\s*/, '').replace(/\s/g, '');
       setPhoneNumber(cleanNumber);
       setLastInitialNumber(initialNumber);
@@ -162,7 +274,7 @@ const Dialer: React.FC<DialerProps> = ({
     }
   }, [initialNumber, lastInitialNumber, phoneNumber]);
 
-  // FIXED: Improved keypad button handler with useCallback
+  // ✅ FIXED: Keypad button handler - no clearing logic here
   const handleKeypadClick = useCallback((digit: KeypadButton): void => {
     if (phoneNumber.length < 10) {
       setClickedButton(digit);
@@ -171,7 +283,7 @@ const Dialer: React.FC<DialerProps> = ({
     }
   }, [phoneNumber.length]);
 
-  // FIXED: Improved backspace handler with useCallback
+  // ✅ FIXED: Backspace handler - no clearing logic here
   const handleBackspace = useCallback((): void => {
     setClickedButton('backspace');
     setPhoneNumber(prev => prev.slice(0, -1));
@@ -183,71 +295,48 @@ const Dialer: React.FC<DialerProps> = ({
     }
   }, []);
 
-  // FIXED: Improved call handler with proper error handling and cleanup
+  // Enhanced call handler with real API integration
   const handleCall = useCallback(async (): Promise<void> => {
-    if (phoneNumber.length !== 10 || localDialerState !== 'idle') return;
+    if (phoneNumber.length !== 10 || isInitiating || callState !== 'idle') return;
 
-    // Format and store dialed number in global context
-    const formattedNumber = `+91 ${phoneNumber.slice(0, 5)} ${phoneNumber.slice(5)}`;
-    setDialedNumber(formattedNumber);
-    
-    setLocalDialerState('ringing');
+    // Check socket connection
+    if (!socketConnected) {
+      setError('No connection - Please check your internet');
+      setShowError(true);
+      return;
+    }
+
+    setIsInitiating(true);
+    setLocalDialerState('dialing');
     setError(null);
     
     try {
-      console.log('📞 Starting call to:', `+91${phoneNumber}`);
+      console.log('📞 Dialer: Starting call to:', `+91${phoneNumber}`);
       
-      // Call the API
-      const response = await callingApiService.initiateCall(`+91${phoneNumber}`);
+      // Format and store dialed number
+      const formattedNumber = `+91 ${phoneNumber.slice(0, 5)} ${phoneNumber.slice(5)}`;
+      setDialedNumber(formattedNumber);
       
-      if (response.status === 1 && response.message.Response === 'success') {
-        // Call initiated successfully
-        const callId = response.message.callid;
-        setCurrentCallId(callId);
-        
-        console.log('✅ Call initiated successfully with ID:', callId);
-        
-        // Switch to call interface
-        if (onCall) {
-          onCall();
-        }
-        
-        // Update global call state
-        setGlobalCallState('connecting');
-        setCallDuration(0);
-        
-        // Store call ID for later use
-        localStorage.setItem('currentCallId', callId.toString());
-        localStorage.setItem('currentPhoneNumber', formattedNumber);
-        
-        // Simulate call connection (replace with real status polling)
-        setTimeout(() => {
-          setGlobalCallState('active');
-        }, 3000);
-        
-        // Reset local dialer state
-        setLocalDialerState('idle');
-        
-      } else {
-        throw new Error(`Call failed: ${response.message.Response || 'Unknown error'}`);
-      }
+      // Use the enhanced initiateCall from CallStateContext
+      await initiateCall(`+91${phoneNumber}`);
       
-    } catch (error) {
-      console.error('❌ Call failed:', error);
+      console.log('📞 Dialer: Call initiated successfully');
       
-      const errorMessage = error instanceof Error ? error.message : 'Call failed';
-      setError(errorMessage);
+    } catch (error: any) {
+      console.error('📞 Dialer: Call failed:', error);
+      setError(error.message || 'Failed to initiate call');
       setShowError(true);
       setLocalDialerState('failed');
+      setIsInitiating(false);
       
       // Reset to idle after 3 seconds
       setTimeout(() => {
         setLocalDialerState('idle');
       }, 3000);
     }
-  }, [phoneNumber, localDialerState, setDialedNumber, onCall, setGlobalCallState, setCallDuration]);
+  }, [phoneNumber, isInitiating, callState, socketConnected, setDialedNumber, initiateCall]);
 
-  // FIXED: Improved dialer focus handler with useCallback
+  // Dialer focus handler
   const handleDialerClick = useCallback((): void => {
     setIsDialerFocused(true);
     if (dialerRef.current) {
@@ -255,20 +344,25 @@ const Dialer: React.FC<DialerProps> = ({
     }
   }, []);
 
-  // FIXED: Improved error close handler with useCallback
+  // Error close handler
   const handleCloseError = useCallback(() => {
     setShowError(false);
   }, []);
 
-  // FIXED: Memoized button state calculations
+  // Button state calculations
   const isCallButtonEnabled = useMemo(() => 
-    phoneNumber.length === 10 && localDialerState === 'idle', 
-    [phoneNumber.length, localDialerState]
+    phoneNumber.length === 10 && 
+    callState === 'idle' && 
+    !isInitiating && 
+    socketConnected, 
+    [phoneNumber.length, callState, isInitiating, socketConnected]
   );
 
   const isKeypadDisabled = useMemo(() => 
-    phoneNumber.length >= 10 || localDialerState === 'ringing',
-    [phoneNumber.length, localDialerState]
+    phoneNumber.length >= 10 || 
+    isInitiating || 
+    callState !== 'idle',
+    [phoneNumber.length, isInitiating, callState]
   );
 
   return (
@@ -312,7 +406,7 @@ const Dialer: React.FC<DialerProps> = ({
                 width: 8,
                 height: 8,
                 borderRadius: '50%',
-                bgcolor: '#2563eb',
+                bgcolor: socketConnected ? '#2563eb' : '#ef4444',
                 zIndex: 10,
                 animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
                 '@keyframes pulse': {
@@ -352,9 +446,10 @@ const Dialer: React.FC<DialerProps> = ({
             </Typography>
             
             {/* Backspace Button */}
-            {phoneNumber.length > 0 && (
+            {phoneNumber.length > 0 && !isInitiating && (
               <IconButton
                 onClick={handleBackspace}
+                disabled={isKeypadDisabled}
                 sx={{
                   bgcolor: 'transparent',
                   p: 1,
@@ -362,6 +457,7 @@ const Dialer: React.FC<DialerProps> = ({
                   transition: 'all 0.2s',
                   transform: clickedButton === 'backspace' ? 'scale(0.9)' : 'scale(1)',
                   '&:hover': { bgcolor: '#f3f4f6' },
+                  '&:disabled': { opacity: 0.5 },
                 }}
               >
                 <BackspaceIcon sx={{ width: 20, height: 20, color: '#6b7280' }} />
@@ -380,9 +476,13 @@ const Dialer: React.FC<DialerProps> = ({
               alignItems: 'center',
               gap: 1,
               flexShrink: 0,
-              borderTop: '1px solid #3b82f6',
-              bgcolor: localDialerState === 'failed' ? '#FEF2F2' : '#eff6ff',
-              animation: localDialerState === 'ringing' ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : 'none',
+              borderTop: `1px solid ${socketConnected ? '#3b82f6' : '#ef4444'}`,
+              bgcolor: !socketConnected ? '#FEF2F2' : 
+                       callState === 'connecting' ? '#FEF3C7' :
+                       callState === 'active' ? '#ECFDF5' :
+                       localDialerState === 'failed' ? '#FEF2F2' : '#eff6ff',
+              animation: (isInitiating || callState === 'connecting') ? 
+                'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : 'none',
             }}
           >
             <Typography
@@ -393,14 +493,17 @@ const Dialer: React.FC<DialerProps> = ({
                 fontWeight: 500,
                 lineHeight: 1.25,
                 textAlign: 'center',
-                color: localDialerState === 'failed' ? '#dc2626' : '#374151',
+                color: !socketConnected ? '#dc2626' :
+                       callState === 'connecting' ? '#d97706' :
+                       callState === 'active' ? '#059669' :
+                       localDialerState === 'failed' ? '#dc2626' : '#374151',
               }}
             >
               {getStatusMessage()}
             </Typography>
           </Box>
 
-          {/* Keypad - Takes remaining space */}
+          {/* Keypad */}
           <Box sx={{ 
             display: 'flex', 
             flexDirection: 'column',
@@ -498,14 +601,18 @@ const Dialer: React.FC<DialerProps> = ({
                 },
               }}
             >
-              <PhoneIcon
-                sx={{
-                  width: 22,
-                  height: 22,
-                  color: isCallButtonEnabled ? 'white' : '#9ca3af',
-                  transition: 'all 0.3s ease',
-                }}
-              />
+              {isInitiating ? (
+                <CircularProgress size={22} sx={{ color: 'white' }} />
+              ) : (
+                <PhoneIcon
+                  sx={{
+                    width: 22,
+                    height: 22,
+                    color: isCallButtonEnabled ? 'white' : '#9ca3af',
+                    transition: 'all 0.3s ease',
+                  }}
+                />
+              )}
             </IconButton>
           </Box>
         </Box>

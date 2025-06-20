@@ -19,6 +19,7 @@ import {
   Stack,
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
+import { authService } from '@/config/authService'; // Import the auth service
 
 // Types
 interface FormData {
@@ -73,6 +74,13 @@ const LoginScreen: React.FC = () => {
     loadSavedPreferences();
   }, []);
 
+  // Check if user is already authenticated
+  useEffect(() => {
+    if (authService.isAuthenticated()) {
+      router.push('/dashboard');
+    }
+  }, [router]);
+
   // Alert Management
   const addAlert = useCallback((alert: Omit<Alert, 'id'>): void => {
     const newAlert: Alert = {
@@ -96,38 +104,19 @@ const LoginScreen: React.FC = () => {
     }
   }, [alerts, removeAlert]);
 
-  // Authentication Logic (Mock)
+  // ✅ UPDATED: Real Authentication Logic using MongoDB Backend
   const authenticateUser = async (credentials: LoginCredentials): Promise<{
     success: boolean;
     message?: string;
     user?: any;
   }> => {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    const mockCredentials = {
-      username: 'admin',
-      password: 'ib@12345'
+    // Convert username to EmployeeId for backend compatibility
+    const backendCredentials = {
+      EmployeeId: credentials.username,
+      password: credentials.password
     };
     
-    if (credentials.username === mockCredentials.username && 
-        credentials.password === mockCredentials.password) {
-      return {
-        success: true,
-        user: {
-          id: 1,
-          username: credentials.username,
-          name: 'Administrator',
-          role: 'admin',
-          email: 'admin@abispro.com'
-        }
-      };
-    } else {
-      return {
-        success: false,
-        message: 'Invalid username or password'
-      };
-    }
+    return await authService.login(backendCredentials);
   };
 
   // Form Handlers
@@ -151,7 +140,7 @@ const LoginScreen: React.FC = () => {
       e.preventDefault();
 
       if (!formData.username.trim()) {
-        addAlert({ message: 'Please enter your username', type: 'error' });
+        addAlert({ message: 'Please enter your Employee ID', type: 'error' });
         return;
       }
 
@@ -174,6 +163,7 @@ const LoginScreen: React.FC = () => {
             type: 'success',
           });
 
+          // Save preferences if remember me is checked
           if (formData.rememberMe) {
             localStorage.setItem('rememberMe', 'true');
             localStorage.setItem('savedUsername', formData.username);
@@ -182,20 +172,21 @@ const LoginScreen: React.FC = () => {
             localStorage.removeItem('savedUsername');
           }
 
+          // Redirect after short delay
           setTimeout(() => {
             router.push('/dashboard');
           }, 1000);
 
         } else {
           addAlert({
-            message: result.message || 'Login failed. Please try again.',
+            message: result.message || 'Login failed. Please check your credentials.',
             type: 'error',
           });
         }
       } catch (error) {
         console.error('Login error:', error);
         addAlert({
-          message: 'An unexpected error occurred. Please try again.',
+          message: 'Cannot connect to server. Please check your connection.',
           type: 'error',
         });
       } finally {
@@ -208,7 +199,7 @@ const LoginScreen: React.FC = () => {
   const handleForgotPassword = useCallback(async (): Promise<void> => {
     if (!formData.username.trim()) {
       addAlert({
-        message: 'Please enter your username first',
+        message: 'Please enter your Employee ID first',
         type: 'info',
       });
       return;
@@ -336,16 +327,18 @@ const LoginScreen: React.FC = () => {
               {/* Login Form */}
               <Box component="form" onSubmit={handleLogin} noValidate>
                 <Stack spacing={3}>
-                  {/* Username Field */}
+                  {/* ✅ UPDATED: Employee ID Field */}
                   <TextField
                     fullWidth
                     id="username"
-                    label="Username"
+                    label="Employee ID"
                     value={formData.username}
                     onChange={handleInputChange('username')}
                     autoComplete="username"
                     disabled={isLoading}
                     variant="outlined"
+                    placeholder="Enter your Employee ID"
+                    helperText="Use your Employee ID to login"
                   />
 
                   {/* Password Field */}
@@ -455,10 +448,17 @@ const LoginScreen: React.FC = () => {
                 </Stack>
               </Box>
 
-              {/* Demo Credentials */}
+              {/* ✅ UPDATED: Demo Credentials */}
               <Box sx={{ mt: 3, textAlign: 'center' }}>
                 <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-                  Demo: admin / ib@12345
+                  Demo: EMP001 / ibg@12345
+                </Typography>
+              </Box>
+
+              {/* ✅ NEW: Connection Status */}
+              <Box sx={{ mt: 2, textAlign: 'center' }}>
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+                  Connected to MongoDB Backend
                 </Typography>
               </Box>
             </CardContent>

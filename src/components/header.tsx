@@ -1,6 +1,6 @@
 'use client';
-
-import { useState } from 'react';
+import React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -10,24 +10,93 @@ import {
   Badge,
   Avatar,
   useTheme,
+  Chip,
+  Tooltip,
 } from '@mui/material';
 import {
   Search as SearchIcon,
   Notifications as NotificationsIcon,
   ArrowBack as ArrowBackIcon,
+  Phone as PhoneIcon,
+  SignalWifiOff as OfflineIcon,
+  SignalWifi4Bar as OnlineIcon,
 } from '@mui/icons-material';
 import { useCallState } from '@/components/CallStateContext';
+import { useSocket } from '@/components/socket-context';
 
 interface HeaderProps {
   onGoBack?: () => void;
-  currentView?: 'dashboard' | 'call-interface' | 'calls'; // UPDATED: Add calls view
+  currentView?: 'dashboard' | 'call-interface' | 'calls';
 }
 
 const Header: React.FC<HeaderProps> = ({ onGoBack, currentView }) => {
   const [searchValue, setSearchValue] = useState<string>('');
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
-  const { callState } = useCallState();
+  const [notificationCount, setNotificationCount] = useState<number>(0);
+  
+  // ✅ ONLY CHANGE: Added lastCalledNumber to existing useCallState
+  const { 
+    callState, 
+    callDuration, 
+    dialedNumber,
+    lastCalledNumber // ✅ ADDED THIS LINE ONLY
+  } = useCallState();
+  
+  const { isConnected: socketConnected, isConnecting, connectionError, on, off } = useSocket();
   const theme = useTheme();
+
+  // Format call duration for display
+  const formatDuration = useCallback((seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }, []);
+
+  // Socket event listeners for real-time notifications
+  useEffect(() => {
+    if (!socketConnected) return;
+
+    // Handle form submission notifications
+    const handleFormSubmission = (data: any) => {
+      console.log('📬 Header: Form submission notification:', data);
+      setNotificationCount(prev => prev + 1);
+    };
+
+    // Handle general notifications
+    const handleNotification = (data: any) => {
+      console.log('📬 Header: New notification:', data);
+      setNotificationCount(prev => prev + 1);
+    };
+
+    // Register socket event listeners
+    on('form:complaint:submitted', handleFormSubmission);
+    on('form:feedback:submitted', handleFormSubmission);
+    on('notification:new', handleNotification);
+
+    // Cleanup
+    return () => {
+      off('form:complaint:submitted', handleFormSubmission);
+      off('form:feedback:submitted', handleFormSubmission);
+      off('notification:new', handleNotification);
+    };
+  }, [socketConnected, on, off]);
+
+  // Load notification count from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedCount = localStorage.getItem('notificationCount');
+      if (savedCount) {
+        setNotificationCount(parseInt(savedCount, 10));
+      }
+    } catch (error) {
+      console.error('Error loading notification count:', error);
+    }
+  }, []);
+
+  // Save notification count to localStorage
+  useEffect(() => {
+    localStorage.setItem('notificationCount', notificationCount.toString());
+  }, [notificationCount]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     setSearchValue(e.target.value);
@@ -47,8 +116,28 @@ const Header: React.FC<HeaderProps> = ({ onGoBack, currentView }) => {
     }
   };
 
-  // UPDATED: Get page title based on current view
+  // Handle notification click
+  const handleNotificationClick = useCallback(() => {
+    console.log('📬 Header: Notification clicked');
+    // Future: Open notifications panel
+    // For now, just reset count
+    setNotificationCount(0);
+  }, []);
+
+  // Get page title with call status
   const getPageTitle = () => {
+    // Show call status in title when there's an active call
+    if (callState === 'active' || callState === 'connecting') {
+      const baseTitle = currentView === 'calls' ? 'Calls' : 
+                       currentView === 'call-interface' ? 'Call Interface' : 'Overview';
+      
+      if (callState === 'active') {
+        return `${baseTitle} • ${formatDuration(callDuration)}`;
+      } else if (callState === 'connecting') {
+        return `${baseTitle} • Connecting...`;
+      }
+    }
+
     switch (currentView) {
       case 'calls':
         return 'Calls';
@@ -60,8 +149,22 @@ const Header: React.FC<HeaderProps> = ({ onGoBack, currentView }) => {
     }
   };
 
-  // Show back button only when in call interface AND call has ended
-  const showBackButton = currentView === 'call-interface' && callState === 'ended';
+  // ✅ ONLY CHANGE: Updated back button logic to include lastCalledNumber
+  const showBackButton = currentView === 'call-interface' && 
+                        (callState === 'ended' || (callState === 'idle' && lastCalledNumber));
+
+  // Get connection status info
+  const getConnectionStatus = () => {
+    if (isConnecting) {
+      return { color: '#F59E0B', text: 'Connecting...', icon: <OnlineIcon /> };
+    } else if (socketConnected) {
+      return { color: '#10B981', text: 'Connected', icon: <OnlineIcon /> };
+    } else {
+      return { color: '#EF4444', text: 'Offline', icon: <OfflineIcon /> };
+    }
+  };
+
+  const connectionStatus = getConnectionStatus();
 
   return (
     <Box
@@ -76,11 +179,12 @@ const Header: React.FC<HeaderProps> = ({ onGoBack, currentView }) => {
         transition: 'all 0.3s',
         borderBottom: 'none',
         boxShadow: 'none',
+        position: 'relative',
       }}
     >
-      {/* Left Side - Go Back Button + Page Title */}
+      {/* Left Side - Go Back Button + Page Title + Call Status */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-        {/* Go Back Button - Only visible in call interface when call ended */}
+        {/* Go Back Button */}
         {showBackButton && (
           <IconButton
             onClick={handleGoBack}
@@ -102,27 +206,77 @@ const Header: React.FC<HeaderProps> = ({ onGoBack, currentView }) => {
           </IconButton>
         )}
 
-        {/* UPDATED: Dynamic page title */}
-        <Typography
-          variant="h4"
-          sx={{
-            background: 'linear-gradient(90deg, #EE3741 68%, #F98087 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            fontFamily: 'Inter',
-            fontSize: '1.75rem',
-            fontWeight: 600,
-            lineHeight: 'normal',
-            margin: 0,
-          }}
-        >
-          {getPageTitle()}
-        </Typography>
+        {/* Page Title with Call Status */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Typography
+            variant="h4"
+            sx={{
+              background: 'linear-gradient(90deg, #EE3741 68%, #F98087 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              fontFamily: 'Inter',
+              fontSize: '1.75rem',
+              fontWeight: 600,
+              lineHeight: 'normal',
+              margin: 0,
+            }}
+          >
+            {getPageTitle()}
+          </Typography>
+
+          {/* Active Call Indicator */}
+          {(callState === 'active' || callState === 'connecting') && (
+            <Chip
+              icon={<PhoneIcon sx={{ fontSize: '0.8rem' }} />}
+              label={callState === 'active' ? 'On Call' : 'Connecting'}
+              size="small"
+              sx={{
+                backgroundColor: callState === 'active' ? '#ECFDF5' : '#FEF3C7',
+                color: callState === 'active' ? '#059669' : '#D97706',
+                border: `1px solid ${callState === 'active' ? '#BBF7D0' : '#FDE68A'}`,
+                height: 24,
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                animation: callState === 'connecting' ? 'pulse 2s infinite' : 'none',
+                '@keyframes pulse': {
+                  '0%, 100%': { opacity: 1 },
+                  '50%': { opacity: 0.7 },
+                },
+              }}
+            />
+          )}
+        </Box>
       </Box>
 
-      {/* Right Side - Search, Notification, Avatar */}
+      {/* Right Side - Connection Status + Search + Notification + Avatar */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+        
+        {/* Connection Status Indicator */}
+        <Tooltip 
+          title={connectionError || connectionStatus.text}
+          arrow
+        >
+          <Chip
+            icon={React.cloneElement(connectionStatus.icon, { 
+              sx: { fontSize: '0.9rem', color: connectionStatus.color } 
+            })}
+            label={connectionStatus.text}
+            size="small"
+            sx={{
+              backgroundColor: 'rgba(255, 255, 255, 0.9)',
+              color: connectionStatus.color,
+              border: `1px solid ${connectionStatus.color}`,
+              height: 28,
+              fontSize: '0.75rem',
+              fontWeight: 500,
+              '&:hover': {
+                backgroundColor: 'rgba(255, 255, 255, 1)',
+              },
+              transition: 'all 0.2s ease',
+            }}
+          />
+        </Tooltip>
         
         {/* Search Bar */}
         <TextField
@@ -172,58 +326,72 @@ const Header: React.FC<HeaderProps> = ({ onGoBack, currentView }) => {
           }}
         />
 
-        {/* Notification Icon */}
-        <IconButton
-          sx={{
-            width: 50,
-            height: 50,
-            transition: 'all 0.2s',
-            '&:hover': {
-              opacity: 0.7,
-            },
-          }}
-        >
-          <Badge
-            badgeContent={3}
-            color="error"
+        {/* Enhanced Notification Icon with Real-time Count */}
+        <Tooltip title="Notifications" arrow>
+          <IconButton
+            onClick={handleNotificationClick}
             sx={{
-              '& .MuiBadge-badge': {
-                fontSize: '0.75rem',
-                height: 16,
-                minWidth: 16,
+              width: 50,
+              height: 50,
+              transition: 'all 0.2s',
+              '&:hover': {
+                opacity: 0.7,
+                transform: 'scale(1.05)',
               },
             }}
           >
-            <NotificationsIcon sx={{ width: 24, height: 24, color: '#666' }} />
-          </Badge>
-        </IconButton>
+            <Badge
+              badgeContent={notificationCount}
+              color="error"
+              max={99}
+              sx={{
+                '& .MuiBadge-badge': {
+                  fontSize: '0.75rem',
+                  height: 18,
+                  minWidth: 18,
+                  fontWeight: 600,
+                  animation: notificationCount > 0 ? 'pulse 2s infinite' : 'none',
+                  '@keyframes pulse': {
+                    '0%, 100%': { transform: 'scale(1)' },
+                    '50%': { transform: 'scale(1.1)' },
+                  },
+                },
+              }}
+            >
+              <NotificationsIcon sx={{ width: 24, height: 24, color: '#666' }} />
+            </Badge>
+          </IconButton>
+        </Tooltip>
 
         {/* User Avatar */}
-        <IconButton
-          sx={{
-            width: 50,
-            height: 50,
-            transition: 'all 0.2s',
-            '&:hover': {
-              opacity: 0.8,
-            },
-          }}
-        >
-          <Avatar
+        <Tooltip title="User Profile" arrow>
+          <IconButton
             sx={{
-              width: 40,
-              height: 40,
-              bgcolor: '#343C6A',
-              color: 'white',
-              fontFamily: 'Inter',
-              fontSize: '1.125rem',
-              fontWeight: 600,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              width: 50,
+              height: 50,
+              transition: 'all 0.2s',
+              '&:hover': {
+                opacity: 0.8,
+                transform: 'scale(1.05)',
+              },
             }}
           >
-            A
-          </Avatar>
-        </IconButton>
+            <Avatar
+              sx={{
+                width: 40,
+                height: 40,
+                bgcolor: '#343C6A',
+                color: 'white',
+                fontFamily: 'Inter',
+                fontSize: '1.125rem',
+                fontWeight: 600,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              }}
+            >
+              A
+            </Avatar>
+          </IconButton>
+        </Tooltip>
       </Box>
     </Box>
   );
